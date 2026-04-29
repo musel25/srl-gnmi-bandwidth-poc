@@ -379,8 +379,10 @@ def verify_bandwidth(
 
     try:
         data = json.loads(result.stdout)
-        # sum_sent is reliable when TC limits egress; receiver may report 0
-        bps = data["end"]["sum_sent"]["bits_per_second"]
+        # UDP mode uses end.sum; TCP mode uses end.sum_sent — try both
+        end = data["end"]
+        section = end.get("sum_sent") or end.get("sum") or {}
+        bps = section["bits_per_second"]
         measured = round(bps / 1e6, 2)
     except (KeyError, json.JSONDecodeError) as exc:
         msg = f"iperf3 JSON parse error: {exc}"

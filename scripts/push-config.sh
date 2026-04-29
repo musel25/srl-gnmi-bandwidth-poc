@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Push startup configs to running SR Linux PEs via sr_cli.
-# Run this after deploy.sh once the PEs are fully booted.
+# Push startup configs to running SR Linux PEs.
+# Uses: docker cp (copy cfg into container) + sr_cli -e -c -d (candidate + commit).
 set -euo pipefail
 
 PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
@@ -25,8 +25,10 @@ wait_for_srlinux() {
 push_config() {
     local node=$1
     local cfg=$2
+    local remote=/tmp/srl-startup.cfg
     echo "=== Pushing config to $node ==="
-    docker exec -i "$node" sr_cli < "$cfg"
+    docker cp "$cfg" "$node:$remote"
+    docker exec "$node" sr_cli -e -c -d "source $remote"
     echo "  Done."
 }
 

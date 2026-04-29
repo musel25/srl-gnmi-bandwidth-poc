@@ -2,8 +2,8 @@
 bandwidth.py — SR Linux gNMI bandwidth allocation for the ContainerLab PoC.
 
 Public API:
-    allocate_bandwidth(pe, subinterface, mbps) -> AllocationResult
-    revoke_bandwidth(pe, subinterface) -> None
+    allocate_bandwidth(request: ServiceRequest) -> AllocationResult
+    revoke_bandwidth(request: ServiceRequest) -> None
     verify_bandwidth(src_ce, dst_ce, expected_mbps, tolerance) -> VerifyResult
 
 Architecture:
@@ -28,6 +28,8 @@ from typing import Optional
 
 from pygnmi.client import gNMIclient
 
+from src.models import ServiceRequest
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -46,12 +48,16 @@ _POLICER_SEQ = 10
 _CE_DATA_IP = {
     "ce1": "192.168.1.10",
     "ce2": "192.168.2.10",
+    "ce3": "192.168.3.10",
+    "ce4": "192.168.4.10",
 }
 
 # CE container that is attached to each (PE, subinterface) pair — used for tc
 _PE_SUBIF_TO_CE = {
     ("pe1", "ethernet-1/2.0"): "ce1",
     ("pe2", "ethernet-1/2.0"): "ce2",
+    ("pe1", "ethernet-1/3.0"): "ce3",
+    ("pe2", "ethernet-1/3.0"): "ce4",
 }
 
 
@@ -61,6 +67,7 @@ _PE_SUBIF_TO_CE = {
 class AllocationResult:
     """Returned by allocate_bandwidth."""
     success: bool
+    customer_id: str
     pe: str
     subinterface: str
     mbps: float
@@ -234,91 +241,86 @@ def wait_for_gnmi(pe: str, timeout: int = 90) -> None:
     raise TimeoutError(f"gNMI on {pe} not ready after {timeout}s")
 
 
-def allocate_bandwidth(
-    pe: str,
-    subinterface: str,
-    mbps: float,
-) -> AllocationResult:
+def allocate_bandwidth(request: ServiceRequest) -> AllocationResult:
     """
-    Allocate *mbps* of ingress bandwidth on *subinterface* of *pe*.
+    Allocate *request.mbps* of ingress bandwidth on *request.subinterface* of *request.pe*.
 
     Pushes a QoS policer-template to the SR Linux PE via gNMI (intent layer),
     then applies a tc rate-limiter on the connected CE container's eth1 for
     actual enforcement (see module docstring for why both are needed).
 
     Args:
-        pe:           Short PE name, e.g. "pe1".
-        subinterface: Full dot-notation name, e.g. "ethernet-1/2.0".
-        mbps:         Target bandwidth in Mbps. Keep below 10 for the container.
+        request: ServiceRequest containing customer_id, pe, subinterface, and mbps.
 
     Returns:
         AllocationResult describing what succeeded.
     """
-    if "." not in subinterface:
-        raise ValueError(f"subinterface must include subif index: 'ethernet-1/2.0', got {subinterface!r}")
-    iface, subif_str = subinterface.rsplit(".", 1)
+    if "." not in request.subinterface:
+        raise ValueError(f"subinterface must include subif index: 'ethernet-1/2.0', got {request.subinterface!r}")
+    iface, subif_str = request.subinterface.rsplit(".", 1)
     subif_idx = int(subif_str)
-    rate_kbps = int(mbps * 1000)
+    rate_kbps = int(request.mbps * 1000)
 
-    logger.info("allocate_bandwidth(%s, %s, %.1f Mbps)", pe, subinterface, mbps)
+    logger.info("allocate_bandwidth(customer=%s, %s, %s, %.1f Mbps)",
+                request.customer_id, request.pe, request.subinterface, request.mbps)
     gnmi_ok = tc_ok = False
 
     try:
-        _gnmi_push_policer(pe, iface, subif_idx, rate_kbps)
+        _gnmi_push_policer(request.pe, iface, subif_idx, rate_kbps)
         gnmi_ok = True
-        logger.info("gNMI policer config committed on %s", pe)
+        logger.info("gNMI policer config committed on %s", request.pe)
     except Exception as exc:
         logger.warning("gNMI push failed (container datapath note: non-fatal): %s", exc)
 
-    ce = _PE_SUBIF_TO_CE.get((pe, subinterface))
+    ce = _PE_SUBIF_TO_CE.get((request.pe, request.subinterface))
     if ce:
         try:
-            _tc_apply(ce, mbps)
+            _tc_apply(ce, request.mbps)
             tc_ok = True
             logger.info("tc enforcement applied on %s/eth1", ce)
         except subprocess.CalledProcessError as exc:
             err = exc.stderr.decode() if exc.stderr else str(exc)
-            return AllocationResult(False, pe, subinterface, mbps, gnmi_ok, False,
-                                    f"tc failed on {ce}: {err}")
+            return AllocationResult(False, request.customer_id, request.pe, request.subinterface,
+                                    request.mbps, gnmi_ok, False, f"tc failed on {ce}: {err}")
     else:
-        logger.warning("No CE mapped for (%s, %s) — tc not applied", pe, subinterface)
+        logger.warning("No CE mapped for (%s, %s) — tc not applied", request.pe, request.subinterface)
 
     return AllocationResult(
         success=gnmi_ok or tc_ok,
-        pe=pe,
-        subinterface=subinterface,
-        mbps=mbps,
+        customer_id=request.customer_id,
+        pe=request.pe,
+        subinterface=request.subinterface,
+        mbps=request.mbps,
         gnmi_pushed=gnmi_ok,
         tc_applied=tc_ok,
         message=f"gNMI={'ok' if gnmi_ok else 'skip'}, tc={'ok' if tc_ok else 'skip'}",
     )
 
 
-def revoke_bandwidth(pe: str, subinterface: str) -> None:
+def revoke_bandwidth(request: ServiceRequest) -> None:
     """
-    Remove the bandwidth allocation on *subinterface* of *pe*.
+    Remove the bandwidth allocation on *request.subinterface* of *request.pe*.
 
     Deletes the gNMI policer config and removes the tc rate-limiter from the
     connected CE container.
 
     Args:
-        pe:           Short PE name, e.g. "pe1".
-        subinterface: Full dot-notation name, e.g. "ethernet-1/2.0".
+        request: ServiceRequest identifying the allocation to revoke.
     """
-    if "." not in subinterface:
-        raise ValueError(f"subinterface must include index: 'ethernet-1/2.0', got {subinterface!r}")
-    iface, subif_str = subinterface.rsplit(".", 1)
+    if "." not in request.subinterface:
+        raise ValueError(f"subinterface must include index: 'ethernet-1/2.0', got {request.subinterface!r}")
+    iface, subif_str = request.subinterface.rsplit(".", 1)
     subif_idx = int(subif_str)
 
-    logger.info("revoke_bandwidth(%s, %s)", pe, subinterface)
+    logger.info("revoke_bandwidth(customer=%s, %s, %s)", request.customer_id, request.pe, request.subinterface)
 
     try:
-        _gnmi_delete_policer(pe, iface, subif_idx)
-        logger.info("gNMI policer removed from %s", pe)
+        _gnmi_delete_policer(request.pe, iface, subif_idx)
+        logger.info("gNMI policer removed from %s", request.pe)
     except Exception as exc:
         logger.warning("gNMI delete failed (non-fatal): %s", exc)
 
-    ce = _PE_SUBIF_TO_CE.get((pe, subinterface))
+    ce = _PE_SUBIF_TO_CE.get((request.pe, request.subinterface))
     if ce:
         _tc_remove(ce)
         logger.info("tc rate-limit removed from %s/eth1", ce)

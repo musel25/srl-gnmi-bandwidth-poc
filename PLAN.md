@@ -49,12 +49,21 @@ iperf3 UDP sender measures ~5 Mbps with tc active vs ~20 Mbps probe rate baselin
 
 ---
 
-## Phase 2 — Service-request abstraction (planned)
+## Phase 2 — Service-request abstraction ✅
 
 Grow the topology to 3–5 routers (add a P backbone router, second customer pair).
 Introduce a `ServiceRequest` dataclass: `{customer_id, pe, subinterface, mbps}`.
 `allocate_bandwidth` and `revoke_bandwidth` accept a `ServiceRequest` object.
 The API surface is now what an MCP tool would expose.
+
+**Built:**
+- `src/models.py` — `ServiceRequest` dataclass (`customer_id`, `pe`, `subinterface`, `mbps`).
+- `src/bandwidth.py` — `allocate_bandwidth` and `revoke_bandwidth` updated to accept
+  a `ServiceRequest`; `AllocationResult` gains a `customer_id` field; `_CE_DATA_IP`
+  and `_PE_SUBIF_TO_CE` extended with ce3/ce4 and ethernet-1/3.0 mappings.
+- `src/demo.py` — rewritten as a Phase 2 demo showing two simultaneous customer
+  allocations (`orange-labs` at 5 Mbps and `inria-net` at 3 Mbps) with verification
+  and revocation of both, exercising the full ServiceRequest API.
 
 ---
 

@@ -61,15 +61,44 @@ The API surface is now what an MCP tool would expose.
 - `src/bandwidth.py` — `allocate_bandwidth` and `revoke_bandwidth` updated to accept
   a `ServiceRequest`; `AllocationResult` gains a `customer_id` field; `_CE_DATA_IP`
   and `_PE_SUBIF_TO_CE` extended with ce3/ce4 and ethernet-1/3.0 mappings.
+  Policer template name is now per-interface (`clab-bw-{iface_id}`) to avoid
+  `FailedPrecondition` gNMI errors when two customers share the same PE.
 - `src/demo.py` — rewritten as a Phase 2 demo showing two simultaneous customer
-  allocations (`orange-labs` at 5 Mbps and `inria-net` at 3 Mbps) with verification
-  and revocation of both, exercising the full ServiceRequest API.
+  allocations (`orange-labs` at 5 Mbps on pe1/e1-2, `inria-net` at 3 Mbps on
+  pe1/e1-3) with verification and revocation of both.
+- Topology expanded from 4 → 7 nodes: added `p1` (SR Linux backbone), `ce3`, `ce4`.
+  Backbone split: pe1 — p1 (10.0.0.0/30) — pe2 (10.0.1.0/30) replacing direct link.
+- New configs: `configs/p1.cfg`; `pe1.cfg` and `pe2.cfg` updated with e1-3 ports
+  and routes via p1.
+
+**Verified (live run):**
+- Traceroute shows correct 4-hop path: ce → pe1 → p1 → pe2 → ce
+- orange-labs: 5.20 Mbps measured vs 5.0 target — PASS
+- inria-net: 3.16 Mbps measured vs 3.0 target — PASS
+- Both paths restored to 20.00 Mbps after revoke — PASS
+
+**Key gotcha fixed:**
+SR Linux rejects deletion of a policer-template that is still referenced by another
+subinterface on the same PE. Fixed by naming templates per-interface:
+`clab-bw-{pe}-e{n}-{m}-{subif}` (e.g. `clab-bw-pe1-e1-2-0`) so each allocation
+has its own independent template and delete operations never conflict.
 
 ---
 
 ## Phase 3 — MCP tool wrapping for agent integration (planned)
 
-Wrap `allocate_bandwidth`, `revoke_bandwidth`, and `verify_bandwidth` as MCP tools.
+Wrap `allocate_bandwidth`, `revoke_bandwidth`, and `verify_bandwidth` as MCP tools
+using the `mcp` Python SDK (`pip install mcp`).
 The consumer agent calls these tools instead of calling them directly in Python.
 Connect to the broader paper's workflow: agent receives an NFT credential from the
 provider, then calls the MCP tool to activate the network service.
+
+**Suggested tool surface:**
+```
+allocate_bandwidth(customer_id, pe, subinterface, mbps) → AllocationResult (as JSON)
+revoke_bandwidth(customer_id, pe, subinterface) → None
+verify_bandwidth(src_ce, dst_ce, expected_mbps?, tolerance?) → VerifyResult (as JSON)
+```
+
+**Entry point:** `src/mcp_server.py` — a stdio MCP server wrapping `src/bandwidth.py`.
+Test by connecting Claude Desktop or running with `mcp dev src/mcp_server.py`.

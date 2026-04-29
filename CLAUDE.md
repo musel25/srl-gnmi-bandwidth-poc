@@ -141,6 +141,15 @@ docker exec clab-bandwidth-poc-ce1 iperf3 -c 192.168.2.10 -p 5201 -t 5 -u -b 20M
 6. **`docker kill` destroys container veth** — Using `docker kill` (not `docker stop`)
    on a CE container breaks its veth pair. Requires lab redeploy to recover.
 
+7. **Shared policer-template name causes `FailedPrecondition` on delete** — SR Linux
+   refuses to delete a `policer-template` that is still referenced by any
+   `qos/interfaces/interface` entry on that PE. If two customers share the same PE
+   and the same template name, revoking one customer's allocation triggers this error
+   because the other customer's interface still holds the reference. Fix: name
+   templates per-interface — `clab-bw-{iface_id}` (e.g. `clab-bw-pe1-e1-2-0`) —
+   so each allocation owns its own independent template. See `_POLICER_TEMPLATE_PREFIX`
+   in `src/bandwidth.py`.
+
 ---
 
 ## Adding a new phase

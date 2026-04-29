@@ -40,8 +40,11 @@ GNMI_PASSWORD = "NokiaSrl1!"
 
 _CONTAINER_PREFIX = "clab-bandwidth-poc-"
 
-# SR Linux QoS policer template name (single per PE — one active allocation)
-_POLICER_TEMPLATE = "clab-bw"
+# Prefix for per-interface policer template names. Full name: clab-bw-{iface_id}
+# (e.g. clab-bw-pe1-e1-2-0). One template per subinterface prevents the
+# FailedPrecondition error that occurs when a shared template is still referenced
+# by another interface during delete-before-replace.
+_POLICER_TEMPLATE_PREFIX = "clab-bw"
 _POLICER_SEQ = 10
 
 # Data-plane IPs of CE containers (set by containerlab exec in topology file)
@@ -129,6 +132,7 @@ def _gnmi_push_policer(pe: str, iface: str, subif_idx: int, rate_kbps: int) -> N
     Delete-before-replace ensures idempotency regardless of prior state.
     """
     iface_id = _qos_iface_id(pe, iface, subif_idx)
+    tpl = f"{_POLICER_TEMPLATE_PREFIX}-{iface_id}"
     burst = max(10_000, rate_kbps * 125 // 10)  # ~0.1 s burst at CIR
 
     with _gnmi(pe) as gc:
@@ -136,16 +140,16 @@ def _gnmi_push_policer(pe: str, iface: str, subif_idx: int, rate_kbps: int) -> N
         try:
             gc.set(delete=[
                 f"/qos/interfaces/interface[interface-id={iface_id}]",
-                f"/qos/policer-templates/policer-template[name={_POLICER_TEMPLATE}]",
+                f"/qos/policer-templates/policer-template[name={tpl}]",
             ])
         except Exception:
             pass  # may not exist on first call
 
         logger.info("gNMI Set: policer-template %s → %d kbps on %s/%s.%d",
-                    _POLICER_TEMPLATE, rate_kbps, pe, iface, subif_idx)
+                    tpl, rate_kbps, pe, iface, subif_idx)
 
         gc.set(update=[
-            (f"/qos/policer-templates/policer-template[name={_POLICER_TEMPLATE}]", {
+            (f"/qos/policer-templates/policer-template[name={tpl}]", {
                 "statistics-mode": "forwarding-focus",
                 "policer": [{
                     "sequence-id": _POLICER_SEQ,
@@ -159,7 +163,7 @@ def _gnmi_push_policer(pe: str, iface: str, subif_idx: int, rate_kbps: int) -> N
         gc.set(update=[
             (f"/qos/interfaces/interface[interface-id={iface_id}]", {
                 "interface-ref": {"interface": iface, "subinterface": subif_idx},
-                "input": {"policer-templates": {"policer-template": _POLICER_TEMPLATE}},
+                "input": {"policer-templates": {"policer-template": tpl}},
             }),
         ])
 
@@ -167,11 +171,12 @@ def _gnmi_push_policer(pe: str, iface: str, subif_idx: int, rate_kbps: int) -> N
 def _gnmi_delete_policer(pe: str, iface: str, subif_idx: int) -> None:
     """Remove the QoS policer-template and its subinterface attachment from *pe*."""
     iface_id = _qos_iface_id(pe, iface, subif_idx)
+    tpl = f"{_POLICER_TEMPLATE_PREFIX}-{iface_id}"
     with _gnmi(pe) as gc:
         logger.info("gNMI Delete: policer on %s/%s.%d", pe, iface, subif_idx)
         gc.set(delete=[
             f"/qos/interfaces/interface[interface-id={iface_id}]",
-            f"/qos/policer-templates/policer-template[name={_POLICER_TEMPLATE}]",
+            f"/qos/policer-templates/policer-template[name={tpl}]",
         ])
 
 

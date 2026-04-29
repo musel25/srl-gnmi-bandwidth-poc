@@ -1,7 +1,7 @@
 [project]
-name = "bandwidth-poc"
+name = "srl-gnmi-bandwidth-poc"
 version = "0.1.0"
-description = "Add your description here"
+description = "SR Linux gNMI bandwidth allocation PoC — network service activation layer for autonomous agent-to-agent provisioning"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

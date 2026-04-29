@@ -16,6 +16,14 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import os
+import sys
+
+# mcp dev loads this file via importlib without package context, so the
+# project root isn't on sys.path. Insert it so "src.*" imports resolve.
+_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from mcp.server.fastmcp import FastMCP
 

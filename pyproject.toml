@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "iperf3>=0.1.11",
+    "mcp>=1.27.0",
     "pygnmi>=0.8.15",
 ]
 

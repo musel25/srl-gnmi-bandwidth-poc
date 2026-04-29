@@ -85,20 +85,49 @@ has its own independent template and delete operations never conflict.
 
 ---
 
-## Phase 3 — MCP tool wrapping for agent integration (planned)
+## Phase 3 — MCP tool wrapping for agent integration ✅
 
 Wrap `allocate_bandwidth`, `revoke_bandwidth`, and `verify_bandwidth` as MCP tools
-using the `mcp` Python SDK (`pip install mcp`).
-The consumer agent calls these tools instead of calling them directly in Python.
-Connect to the broader paper's workflow: agent receives an NFT credential from the
-provider, then calls the MCP tool to activate the network service.
+using the `mcp` Python SDK so an AI agent can call the bandwidth API directly as
+tools without writing any Python.
 
-**Suggested tool surface:**
+**Built:** `src/mcp_server.py` — a FastMCP stdio server with three tools:
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `allocate_bandwidth` | `customer_id, pe, subinterface, mbps` | JSON-encoded `AllocationResult` |
+| `revoke_bandwidth` | `customer_id, pe, subinterface` | JSON `{status, customer_id, pe, subinterface}` |
+| `verify_bandwidth` | `src_ce, dst_ce, expected_mbps?, tolerance?` | JSON-encoded `VerifyResult` |
+
+**Dependencies:** `mcp>=1.27.0` added to `pyproject.toml` via `uv add mcp`.
+
+**How to test interactively:**
+```bash
+uv run mcp dev src/mcp_server.py
 ```
-allocate_bandwidth(customer_id, pe, subinterface, mbps) → AllocationResult (as JSON)
-revoke_bandwidth(customer_id, pe, subinterface) → None
-verify_bandwidth(src_ce, dst_ce, expected_mbps?, tolerance?) → VerifyResult (as JSON)
+This opens the MCP Inspector in a browser where you can call each tool manually.
+
+**How to run (stdio, for Claude Desktop):**
+```bash
+uv run python -m src.mcp_server
 ```
 
-**Entry point:** `src/mcp_server.py` — a stdio MCP server wrapping `src/bandwidth.py`.
-Test by connecting Claude Desktop or running with `mcp dev src/mcp_server.py`.
+**Claude Desktop config** (`~/Library/Application\ Support/Claude/claude_desktop_config.json`
+on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+```json
+{
+  "mcpServers": {
+    "srl-bandwidth": {
+      "command": "uv",
+      "args": [
+        "--directory", "/home/musel/Github/srl-gnmi-bandwidth-poc",
+        "run", "python", "-m", "src.mcp_server"
+      ]
+    }
+  }
+}
+```
+
+**Paper connection:** An AI agent receiving an NFT credential from the provider
+can now call `allocate_bandwidth` as an MCP tool to activate the network service
+in a single round-trip, without needing direct access to the Python module.

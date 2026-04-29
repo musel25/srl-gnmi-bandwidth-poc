@@ -6,7 +6,8 @@ Service Provisioning via Smart-Contract Escrow and Tokenized Authorization"*
 
 This repo demonstrates the **SDN activation step** of that workflow: given a
 service request, push a configuration to a Nokia SR Linux provider-edge router
-via gNMI and verify the rate-limit takes effect.
+via gNMI, verify the rate-limit takes effect, and expose the whole operation as
+MCP tools that an AI agent can call directly.
 
 ## Quick start
 
@@ -31,25 +32,39 @@ bash scripts/push-config.sh
 bash scripts/connectivity-test.sh
 ```
 
-Expected: ping CE1→CE2 succeeds, traceroute shows 3 hops.
+Expected: ping CE1→CE2 succeeds, traceroute shows 4 hops (ce1 → pe1 → p1 → pe2 → ce2).
 
-### Phase 1 — Bandwidth allocation demo
+### Phase 1 & 2 — Bandwidth allocation demo
 
 ```bash
 # Install Python dependencies
 uv sync
 
-# Run the demo (no sudo needed)
+# Run the demo (two simultaneous customers)
 uv run python -m src.demo
 ```
 
 The demo:
-1. Measures baseline iperf3 throughput
-2. Calls `allocate_bandwidth("pe1", "ethernet-1/2.0", 5.0)` — pushes a gNMI QoS
-   policer to SR Linux + applies `tc tbf` on CE1's eth1 for enforcement
-3. Verifies measured throughput drops to ~5 Mbps
-4. Calls `revoke_bandwidth("pe1", "ethernet-1/2.0")` — removes both
-5. Verifies throughput returns to baseline
+1. Measures baseline iperf3 throughput for both customer paths
+2. Calls `allocate_bandwidth` for `orange-labs` (5 Mbps on pe1/e1-2) and
+   `inria-net` (3 Mbps on pe1/e1-3) — pushes gNMI QoS policers + applies
+   `tc tbf` on the CE containers for enforcement
+3. Verifies measured throughput matches each target (±20%)
+4. Revokes both allocations and verifies throughput returns to baseline
+
+### Phase 3 — MCP server (agent integration)
+
+```bash
+# Start the MCP inspector (interactive browser UI for testing tools)
+uv run mcp dev src/mcp_server.py
+
+# Or run directly over stdio (used by Claude Desktop / agent frameworks)
+uv run python -m src.mcp_server
+```
+
+The server exposes three tools: `allocate_bandwidth`, `revoke_bandwidth`,
+`verify_bandwidth`. See [Connecting to Claude Desktop](#connecting-to-claude-desktop)
+below.
 
 ### Teardown
 
@@ -60,16 +75,58 @@ bash scripts/destroy.sh
 ## Architecture
 
 ```
-src/bandwidth.py          <- Public API (allocate / revoke / verify)
-     |
-     |-- gNMI (pygnmi)    -> SR Linux PE: pushes QoS policer-template (intent layer)
-     `-- tc tbf            -> CE container: actual traffic enforcement
+Claude Desktop / AI Agent
+        │  MCP (stdio)
+        ▼
+src/mcp_server.py          <- FastMCP server (Phase 3)
+        │
+src/bandwidth.py           <- Public API (allocate / revoke / verify)
+        │
+        ├── gNMI (pygnmi)  -> SR Linux PE: pushes QoS policer-template (intent layer)
+        └── tc tbf          -> CE container: actual traffic enforcement
 ```
 
 The free SR Linux container image does not enforce QoS policer rates in its
 software datapath (hardware-only feature). `tc` on the CE container provides
 real enforcement while the gNMI call records the intent on the router — matching
 how a real agent would call a network API.
+
+## Topology
+
+```
+ 192.168.1.0/24                                         192.168.2.0/24
+ce1 ──── pe1 ──── p1 (backbone) ──── pe2 ──── ce2
+ce3 ────/                              \──── ce4
+ 192.168.3.0/24                         192.168.4.0/24
+```
+
+Seven nodes: `pe1`, `pe2`, `p1` (SR Linux `ixr-d2l`), `ce1`–`ce4` (Linux,
+`network-multitool`). Two independent customer paths share `pe1`.
+
+## Connecting to Claude Desktop
+
+Add the following to your Claude Desktop configuration file:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "srl-bandwidth": {
+      "command": "uv",
+      "args": [
+        "--directory", "/path/to/srl-gnmi-bandwidth-poc",
+        "run", "python", "-m", "src.mcp_server"
+      ]
+    }
+  }
+}
+```
+
+After restarting Claude Desktop the hammer icon will show three tools. The
+ContainerLab topology must be deployed and router configs pushed before calling
+any tool.
 
 ## Notes
 
@@ -86,5 +143,5 @@ how a real agent would call a network API.
 |---|---|---|
 | 0 | done | ContainerLab topology, connectivity, iperf3 baseline |
 | 1 | done | gNMI bandwidth allocation + tc enforcement + demo |
-| 2 | planned | Service-request abstraction, larger topology |
-| 3 | planned | MCP tool wrapping for agent integration |
+| 2 | done | ServiceRequest abstraction, 7-node topology, multi-customer demo |
+| 3 | done | FastMCP stdio server — `allocate_bandwidth`, `revoke_bandwidth`, `verify_bandwidth` as AI agent tools |

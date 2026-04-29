@@ -45,7 +45,9 @@ containerlab-pushing/
 ├── src/
 │   ├── __init__.py
 │   ├── bandwidth.py      # Public API: allocate/revoke/verify_bandwidth
-│   └── demo.py           # End-to-end demo script
+│   ├── demo.py           # End-to-end demo script
+│   ├── models.py         # ServiceRequest dataclass
+│   └── mcp_server.py     # FastMCP stdio server (Phase 3)
 ├── topology/
 │   └── bandwidth-poc.clab.yml
 ├── pyproject.toml        # uv project (Python 3.13)
@@ -88,8 +90,14 @@ docker exec -it clab-bandwidth-poc-pe1 sr_cli
 # View current QoS config on PE1
 docker exec clab-bandwidth-poc-pe1 sr_cli "info /qos"
 
-# Run the Phase 1 demo
+# Run the Phase 2 demo (two simultaneous customers)
 uv run python -m src.demo
+
+# Run the MCP server interactively (opens Inspector in browser)
+uv run mcp dev src/mcp_server.py
+
+# Run the MCP server over stdio (for Claude Desktop / agent integration)
+uv run python -m src.mcp_server
 
 # Destroy the lab
 bash scripts/destroy.sh
@@ -149,6 +157,33 @@ docker exec clab-bandwidth-poc-ce1 iperf3 -c 192.168.2.10 -p 5201 -t 5 -u -b 20M
    templates per-interface — `clab-bw-{iface_id}` (e.g. `clab-bw-pe1-e1-2-0`) —
    so each allocation owns its own independent template. See `_POLICER_TEMPLATE_PREFIX`
    in `src/bandwidth.py`.
+
+---
+
+## Connecting Claude Desktop to the MCP server (Phase 3)
+
+Add the following to your Claude Desktop config file:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "srl-bandwidth": {
+      "command": "uv",
+      "args": [
+        "--directory", "/home/musel/Github/srl-gnmi-bandwidth-poc",
+        "run", "python", "-m", "src.mcp_server"
+      ]
+    }
+  }
+}
+```
+
+After restarting Claude Desktop the hammer icon will show three tools:
+`allocate_bandwidth`, `revoke_bandwidth`, `verify_bandwidth`.  The ContainerLab
+topology must already be deployed and router configs pushed before calling any tool.
 
 ---
 

@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+topology/clab-bandwidth-poc/
+agent-network-poc.tar.gz

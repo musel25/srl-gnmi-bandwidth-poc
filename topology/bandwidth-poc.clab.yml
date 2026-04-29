@@ -17,7 +17,7 @@ topology:
       # ixrd2l is one of the 7220 IXR types that supports the qos policer
       # YANG paths we'll use in Phase 1. The datapath in license-less mode
       # is capped at 1000 PPS (~12 Mbps), so keep allocations modest.
-      type: ixrd2l
+      type: ixr-d2l
       image: ghcr.io/nokia/srlinux:latest
     linux:
       # multitool image ships with iperf3, ping, traceroute, tcpdump, etc.
@@ -26,10 +26,10 @@ topology:
   nodes:
     pe1:
       kind: nokia_srlinux
-      startup-config: configs/pe1.cfg
+      startup-config: ../configs/pe1.cfg
     pe2:
       kind: nokia_srlinux
-      startup-config: configs/pe2.cfg
+      startup-config: ../configs/pe2.cfg
 
     ce1:
       kind: linux

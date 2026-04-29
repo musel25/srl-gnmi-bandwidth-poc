@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Push startup configs to running SR Linux PEs.
+# Push startup configs to running SR Linux nodes.
 # Uses: docker cp (copy cfg into container) + sr_cli -e -c -d (candidate + commit).
 set -euo pipefail
 
 PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 
+P1=clab-bandwidth-poc-p1
 PE1=clab-bandwidth-poc-pe1
 PE2=clab-bandwidth-poc-pe2
 
@@ -32,11 +33,13 @@ push_config() {
     echo "  Done."
 }
 
+wait_for_srlinux "$P1"
 wait_for_srlinux "$PE1"
 wait_for_srlinux "$PE2"
 
+push_config "$P1"  "$PROJECT_ROOT/configs/p1.cfg"
 push_config "$PE1" "$PROJECT_ROOT/configs/pe1.cfg"
 push_config "$PE2" "$PROJECT_ROOT/configs/pe2.cfg"
 
 echo
-echo "Config pushed to both PEs. Run scripts/connectivity-test.sh to verify."
+echo "Config pushed to P1, PE1, PE2. Run scripts/connectivity-test.sh to verify."

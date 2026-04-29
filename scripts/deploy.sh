@@ -10,7 +10,7 @@ if ! command -v containerlab >/dev/null 2>&1; then
     exit 1
 fi
 
-sudo containerlab deploy -t topology/bandwidth-poc.clab.yml
+sudo containerlab deploy -t topology/bandwidth-poc.clab.yml --reconfigure
 
 echo
 echo "=== Lab deployed. Nodes: ==="

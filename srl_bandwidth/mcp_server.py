@@ -7,8 +7,8 @@ Exposes three tools:
     verify_bandwidth    — iperf3 UDP throughput probe between two CEs
 
 Run with:
-    uv run mcp dev src/mcp_server.py          # interactive inspector
-    uv run python -m src.mcp_server           # direct stdio (for Claude Desktop)
+    uv run mcp dev srl_bandwidth/mcp_server.py   # interactive inspector
+    uv run python -m srl_bandwidth.mcp_server    # direct stdio (for Claude Desktop)
 """
 
 from __future__ import annotations
@@ -16,23 +16,15 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import os
-import sys
-
-# mcp dev loads this file via importlib without package context, so the
-# project root isn't on sys.path. Insert it so "src.*" imports resolve.
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
 
 from mcp.server.fastmcp import FastMCP
 
-from src.bandwidth import (
+from srl_bandwidth.bandwidth import (
     allocate_bandwidth as _allocate,
     revoke_bandwidth as _revoke,
     verify_bandwidth as _verify,
 )
-from src.models import ServiceRequest
+from srl_bandwidth.models import ServiceRequest
 
 logging.basicConfig(level=logging.INFO)
 

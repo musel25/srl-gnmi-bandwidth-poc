@@ -91,13 +91,13 @@ docker exec -it clab-bandwidth-poc-pe1 sr_cli
 docker exec clab-bandwidth-poc-pe1 sr_cli "info /qos"
 
 # Run the Phase 2 demo (two simultaneous customers)
-uv run python -m src.demo
+uv run python -m srl_bandwidth.demo
 
 # Run the MCP server interactively (opens Inspector in browser)
-uv run mcp dev src/mcp_server.py
+uv run mcp dev srl_bandwidth/mcp_server.py
 
 # Run the MCP server over stdio (for Claude Desktop / agent integration)
-uv run python -m src.mcp_server
+uv run python -m srl_bandwidth.mcp_server
 
 # Destroy the lab
 bash scripts/destroy.sh
@@ -111,7 +111,7 @@ docker exec clab-bandwidth-poc-ce1 iperf3 -c 192.168.2.10 -p 5201 -t 5 -u -b 20M
 
 ## Python conventions
 
-- **Environment**: `uv` for all dependency management. `uv run python -m src.demo` to execute.
+- **Environment**: `uv` for all dependency management. `uv run python -m srl_bandwidth.demo` to execute.
 - **Package**: `src/` is the root package. New phase modules go in `src/`.
 - **Logging**: `logging.getLogger(__name__)` in every module. Demo uses `INFO` level.
 - **gNMI**: Always use dict-style values in `gc.set(update=[...])` — leaf-level tuples
@@ -174,7 +174,7 @@ Add the following to your Claude Desktop config file:
       "command": "uv",
       "args": [
         "--directory", "/home/musel/Github/srl-gnmi-bandwidth-poc",
-        "run", "python", "-m", "src.mcp_server"
+        "run", "python", "-m", "srl_bandwidth.mcp_server"
       ]
     }
   }

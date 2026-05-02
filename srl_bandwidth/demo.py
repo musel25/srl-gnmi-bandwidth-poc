@@ -1,14 +1,14 @@
 """
 Phase 2 demo: ServiceRequest API — two customers allocated and verified simultaneously.
 
-Run with:  uv run python -m src.demo
+Run with:  uv run python -m srl_bandwidth.demo
 """
 
 import logging
 import sys
 import time
 
-from src.bandwidth import (
+from srl_bandwidth.bandwidth import (
     AllocationResult,
     VerifyResult,
     allocate_bandwidth,
@@ -16,7 +16,7 @@ from src.bandwidth import (
     verify_bandwidth,
     wait_for_gnmi,
 )
-from src.models import ServiceRequest
+from srl_bandwidth.models import ServiceRequest
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)-8s %(message)s")
 

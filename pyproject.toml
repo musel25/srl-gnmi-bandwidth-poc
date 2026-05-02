@@ -1,5 +1,5 @@
 [project]
-name = "srl-gnmi-bandwidth-poc"
+name = "srl-bandwidth"
 version = "0.1.0"
 description = "SR Linux gNMI bandwidth allocation PoC — network service activation layer for autonomous agent-to-agent provisioning"
 readme = "README.md"
@@ -14,3 +14,10 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["srl_bandwidth"]

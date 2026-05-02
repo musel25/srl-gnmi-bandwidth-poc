@@ -135,7 +135,7 @@ bash scripts/connectivity-test.sh
 uv sync
 
 # 6. Run the demo (two customers allocated simultaneously)
-uv run python -m src.demo
+uv run python -m srl_bandwidth.demo
 ```
 
 ### What the demo does
@@ -330,7 +330,7 @@ After removal, the Linux kernel's default `pfifo_fast` qdisc takes over on `eth1
 
 ## MCP server — agent integration
 
-[MCP](https://modelcontextprotocol.io) (Model Context Protocol) is an open standard for giving AI agents access to external tools. `src/mcp_server.py` wraps the bandwidth API as three MCP tools over a stdio transport, so any MCP-compatible agent (Claude, GPT, custom) can call network operations as native function calls — no Python knowledge required.
+[MCP](https://modelcontextprotocol.io) (Model Context Protocol) is an open standard for giving AI agents access to external tools. `srl_bandwidth/mcp_server.py` wraps the bandwidth API as three MCP tools over a stdio transport, so any MCP-compatible agent (Claude, GPT, custom) can call network operations as native function calls — no Python knowledge required.
 
 ### The three tools
 
@@ -345,7 +345,7 @@ After removal, the Linux kernel's default `pfifo_fast` qdisc takes over on `eth1
 The MCP SDK ships a browser-based inspector for interactive testing:
 
 ```bash
-uv run mcp dev src/mcp_server.py
+uv run mcp dev srl_bandwidth/mcp_server.py
 ```
 
 This starts a local web server and opens the MCP Inspector, where you can call each tool manually, see the input/output schema, and inspect what the server returns — without needing Claude at all.
@@ -353,7 +353,7 @@ This starts a local web server and opens the MCP Inspector, where you can call e
 ### Running over stdio (for agent frameworks)
 
 ```bash
-uv run python -m src.mcp_server
+uv run python -m srl_bandwidth.mcp_server
 ```
 
 This is the transport Claude Desktop and other MCP hosts use. The host process spawns this command and communicates over stdin/stdout using the MCP JSON-RPC protocol.
@@ -384,7 +384,7 @@ Add to your Claude Desktop config:
       "command": "uv",
       "args": [
         "--directory", "/path/to/srl-gnmi-bandwidth-poc",
-        "run", "python", "-m", "src.mcp_server"
+        "run", "python", "-m", "srl_bandwidth.mcp_server"
       ]
     }
   }

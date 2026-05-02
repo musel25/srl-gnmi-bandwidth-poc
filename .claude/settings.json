@@ -4,7 +4,7 @@
       "command": "uv",
       "args": [
         "--directory", "/home/musel/Github/srl-gnmi-bandwidth-poc",
-        "run", "python", "-m", "src.mcp_server"
+        "run", "python", "-m", "srl_bandwidth.mcp_server"
       ]
     }
   }

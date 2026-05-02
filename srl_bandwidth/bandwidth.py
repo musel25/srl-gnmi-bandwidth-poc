@@ -34,7 +34,7 @@ from typing import Optional
 
 from pygnmi.client import gNMIclient
 
-from src.models import ServiceRequest
+from srl_bandwidth.models import ServiceRequest
 
 logger = logging.getLogger(__name__)
 

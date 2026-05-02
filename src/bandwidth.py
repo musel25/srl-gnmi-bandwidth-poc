@@ -9,12 +9,18 @@ Public API:
 Architecture:
     1. gNMI (pygnmi) pushes a QoS policer-template to the SR Linux PE — this is
        the "intent" layer and matches how a real agent would call a router API.
-    2. Linux tc (token-bucket filter) applied inside the CE container provides
-       actual traffic enforcement, since the free SR Linux container image does
-       not enforce policer rates in its software datapath (1000 PPS ceiling only).
-    3. iperf3 UDP sender-side throughput is used for verification: tc on CE1's
-       eth1 egress means the sender itself is rate-limited, giving a reliable
-       reading regardless of receiver-side reporting issues in the container env.
+    2. Linux tc tbf is applied on the CE container's eth1 egress for actual
+       enforcement.  TC ingress policing on the PE container does NOT work here:
+       SR Linux's data plane reads packets via AF_PACKET raw sockets, which fire
+       in the kernel before tc ingress qdiscs run (confirmed empirically — tc
+       shows drops, receiver shows 0 loss).  CE-side tbf is applied instead;
+       it is functionally equivalent because CE egress and PE ingress operate on
+       the same veth link.  In production Nokia SR Linux hardware, the ASIC
+       policer configured via gNMI would enforce the rate at the PE.
+    3. iperf3 UDP is used for verification.  The iperf3 server is captured via
+       Popen (receiver-side JSON) for accurate measurement.  With CE-side tbf
+       the sender is rate-limited, so both sender-side and receiver-side agree;
+       receiver-side is preferred as it is the ground truth.
 """
 
 from __future__ import annotations
@@ -55,7 +61,9 @@ _CE_DATA_IP = {
     "ce4": "192.168.4.10",
 }
 
-# CE container that is attached to each (PE, subinterface) pair — used for tc
+# CE container connected to each (PE, subinterface) pair — used for tc enforcement.
+# SR Linux's AF_PACKET data plane bypasses kernel tc on PE interfaces, so we enforce
+# on the CE container's eth1 egress (same veth link, functionally equivalent).
 _PE_SUBIF_TO_CE = {
     ("pe1", "ethernet-1/2.0"): "ce1",
     ("pe2", "ethernet-1/2.0"): "ce2",
@@ -182,11 +190,14 @@ def _gnmi_delete_policer(pe: str, iface: str, subif_idx: int) -> None:
 
 def _tc_apply(ce: str, rate_mbps: float) -> None:
     """
-    Apply a token-bucket rate limiter on *ce*'s eth1 (egress from CE).
+    Apply a token-bucket rate limiter on *ce*'s eth1 egress.
 
-    This is the actual enforcement point in the container PoC.  Traffic leaving
-    the CE is throttled here, mirroring a policer on the connected PE's ingress.
-    tc tbf is chosen for its minimal latency impact at low rates.
+    This is the actual enforcement point in the container PoC.  PE-side tc ingress
+    policing does not work here because SR Linux reads packets via AF_PACKET raw
+    sockets, which fire in the kernel before tc ingress qdiscs run.  CE-side tbf
+    on the same veth link is functionally equivalent and goes through normal kernel
+    tx path.  In production, the SR Linux ASIC policer configured via gNMI above
+    provides PE-side enforcement.
     """
     rate_kbps = int(rate_mbps * 1000)
     burst_kbit = max(32, rate_kbps // 8)
@@ -248,11 +259,12 @@ def wait_for_gnmi(pe: str, timeout: int = 90) -> None:
 
 def allocate_bandwidth(request: ServiceRequest) -> AllocationResult:
     """
-    Allocate *request.mbps* of ingress bandwidth on *request.subinterface* of *request.pe*.
+    Allocate *request.mbps* of bandwidth on *request.subinterface* of *request.pe*.
 
-    Pushes a QoS policer-template to the SR Linux PE via gNMI (intent layer),
-    then applies a tc rate-limiter on the connected CE container's eth1 for
-    actual enforcement (see module docstring for why both are needed).
+    Pushes a QoS policer-template to the SR Linux PE via gNMI (intent layer, as a
+    real production agent would), then applies a tc tbf rate-limiter on the connected
+    CE container's eth1 egress for actual enforcement (see module docstring for why
+    CE-side tc is required in the container PoC).
 
     Args:
         request: ServiceRequest containing customer_id, pe, subinterface, and mbps.
@@ -341,10 +353,10 @@ def verify_bandwidth(
     Measure throughput from *src_ce* to *dst_ce* and optionally verify a target.
 
     Uses iperf3 UDP at 3× the expected rate (or 20 Mbps for baseline).  The
-    sender-reported throughput is used as the measurement: tc shaping on the
-    src_ce egress interface limits how fast the sender can push, giving a
-    reliable reading even when receiver-side reporting is unreliable (known
-    issue in the SR Linux container environment).
+    iperf3 server is run via Popen so its JSON stdout is captured; receiver-side
+    throughput is used as the primary measurement.  With CE-side tbf enforcing
+    the rate, the sender is genuinely limited and both sides agree; receiver-side
+    is preferred as the ground truth.
 
     Args:
         src_ce:        Source CE name, e.g. "ce1".
@@ -365,36 +377,57 @@ def verify_bandwidth(
 
     logger.info("verify_bandwidth: UDP %s→%s probe=%.0f Mbps", src_ce, dst_ce, probe_mbps)
 
-    # Start one-shot iperf3 server on destination
-    subprocess.run(
-        ["docker", "exec", "-d", dst_container, "iperf3", "-s", "-1", "-p", "5201"],
-        check=True,
+    # Run the iperf3 server via Popen so we capture its JSON stdout (receiver-side
+    # throughput) directly, without relying on --get-server-output protocol support.
+    server_proc = subprocess.Popen(
+        ["docker", "exec", dst_container, "iperf3", "-s", "-1", "-p", "5201", "-J"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     time.sleep(1)
 
-    result = subprocess.run(
+    client_result = subprocess.run(
         ["docker", "exec", src_container,
          "iperf3", "-c", dst_ip, "-p", "5201",
          "-t", "5", "-u", "-b", f"{int(probe_mbps)}M", "-J"],
         capture_output=True, text=True,
     )
 
-    if result.returncode != 0:
-        msg = f"iperf3 error: {result.stderr.strip()}"
+    # Collect server output — exits after the single client connection
+    try:
+        server_stdout, _ = server_proc.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        server_proc.kill()
+        server_stdout = ""
+
+    if client_result.returncode != 0:
+        msg = f"iperf3 error: {client_result.stderr.strip()}"
         logger.error(msg)
         return VerifyResult(False, 0.0, expected_mbps, tolerance, msg)
 
-    try:
-        data = json.loads(result.stdout)
-        # UDP mode uses end.sum; TCP mode uses end.sum_sent — try both
-        end = data["end"]
-        section = end.get("sum_sent") or end.get("sum") or {}
-        bps = section["bits_per_second"]
-        measured = round(bps / 1e6, 2)
-    except (KeyError, json.JSONDecodeError) as exc:
-        msg = f"iperf3 JSON parse error: {exc}"
-        logger.error(msg)
-        return VerifyResult(False, 0.0, expected_mbps, tolerance, msg)
+    # Parse receiver-side bps from the server JSON
+    bps = 0.0
+    if server_stdout:
+        try:
+            srv_data = json.loads(server_stdout)
+            srv_section = srv_data.get("end", {}).get("sum") or {}
+            bps = srv_section.get("bits_per_second", 0.0)
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    if not bps:
+        # Fallback: sender-side from client JSON. With CE-side tbf this is also
+        # accurate (sender is genuinely limited). Without tbf this would show the
+        # probe rate rather than actual link throughput.
+        try:
+            data = json.loads(client_result.stdout)
+            section = data["end"].get("sum_sent") or data["end"].get("sum") or {}
+            bps = section.get("bits_per_second", 0.0)
+        except (json.JSONDecodeError, KeyError) as exc:
+            msg = f"iperf3 JSON parse error: {exc}"
+            logger.error(msg)
+            return VerifyResult(False, 0.0, expected_mbps, tolerance, msg)
+
+    measured = round(bps / 1e6, 2)
 
     if expected_mbps is None:
         msg = f"Baseline: {measured:.2f} Mbps"

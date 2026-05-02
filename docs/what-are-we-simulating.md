@@ -36,9 +36,9 @@ When Customer A signs a contract for "5 Mbps guaranteed", the ISP needs to enfor
 `allocate_bandwidth` does exactly that:
 
 1. **Tells the PE router** — "on the port where Customer A is connected, apply a policer that caps ingress traffic at 5 Mbps". This is the gNMI write to SR Linux. It's the authoritative intent record on the router.
-2. **Enforces it** — since the containerized SR Linux image can't enforce policers in software (hardware-only feature), `tc tbf` on the CE's outgoing interface acts as the enforcement point instead.
+2. **Enforces it** — since the containerized SR Linux image can't enforce policers in software (hardware-only feature), `tc tbf` is applied on the CE container's `eth1` egress. SR Linux's data plane forwards packets via `AF_PACKET` raw sockets, which the Linux kernel delivers *before* tc ingress qdiscs fire — so PE-side tc policing is bypassed by SR Linux's own forwarding path. CE-side `tc tbf` operates on the same physical veth link, just from the CE end, and is the effective enforcement point. In production Nokia SR Linux hardware the ASIC policer (configured via gNMI) would enforce the rate at the true PE ingress.
 
-It is not "priority" — it is a **hard rate cap**. Customer A physically cannot send more than 5 Mbps into the network, regardless of how fast their internal link is.
+It is not "priority" — it is a **hard rate cap**. Customer A physically cannot send more than 5 Mbps into the network, because the rate limiter is on their own egress path into the veth link.
 
 ---
 

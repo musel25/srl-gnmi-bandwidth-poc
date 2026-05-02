@@ -240,7 +240,7 @@ The free Nokia SR Linux container image runs a Linux-based software datapath. Qo
 
 ### Step 3 — tc tbf: real enforcement on the CE container
 
-Because the router won't enforce the rate in software, the code falls back to Linux traffic control (`tc`) applied **inside the source CE container's kernel**, on its `eth1` egress interface:
+Because the router won't enforce the rate in its software datapath, the code applies Linux traffic control (`tc`) **inside the source CE container's kernel**, on its `eth1` egress interface:
 
 ```bash
 # Remove any existing qdisc (safe to fail if none exists)
@@ -266,8 +266,10 @@ The code looks up which CE is connected to each PE subinterface via a static map
 ("pe2", "ethernet-1/3.0") → "ce4"
 ```
 
-**Why shape on the CE, not the PE?**  
-In a real network, the PE's ingress policer would drop/mark traffic arriving from the customer. Here, since the SR Linux container doesn't enforce the policer, `tc` on the CE egress is the practical substitute. The gNMI write to the PE still happens and is semantically correct — it's the authoritative "intent" record on the router, exactly as a real production agent would write. The `tc` rule just fills in what the container hardware cannot do.
+**Why enforce on the CE, not the PE?**  
+The ideal enforcement point is the PE's ingress port — where customer traffic enters the provider network. However, Nokia SR Linux's container data plane reads packets from its veth interfaces using `AF_PACKET` raw sockets. In the Linux kernel, `AF_PACKET` with `ETH_P_ALL` delivers packets to socket listeners **before** `tc` ingress qdiscs fire (`sch_handle_ingress`). This means SR Linux receives and forwards packets before the kernel's `tc` policer can drop them — confirmed empirically: tc shows thousands of drops but iperf3 receiver reports zero loss.
+
+CE-side `tc tbf` on the same veth link is the practical alternative. It is applied on the ce1 egress before packets enter the veth, so the packet is genuinely delayed or dropped before SR Linux ever sees it. The gNMI write to the PE still happens and is semantically correct — it is the authoritative "intent" record on the router, exactly as a real production agent would write. In production Nokia SR Linux hardware the ASIC policer (configured via gNMI) performs true PE-side enforcement; `tc` on the CE substitutes for it in the container PoC.
 
 ### The full call graph
 
@@ -300,11 +302,11 @@ allocate_bandwidth(ServiceRequest("orange-labs", "pe1", "ethernet-1/2.0", 5.0))
 verify_bandwidth("ce1", "ce2", expected_mbps=5.0, tolerance=0.2)
 ```
 
-1. Starts a one-shot iperf3 UDP **server** on `ce2`: `docker exec -d clab-bandwidth-poc-ce2 iperf3 -s -1 -p 5201`
-2. Runs a 5-second iperf3 UDP **client** on `ce1` probing at 3× the target (15 Mbps), so the cap has room to bite: `docker exec clab-bandwidth-poc-ce1 iperf3 -c 192.168.2.10 -t 5 -u -b 15M -J`
-3. Reads `end.sum_sent.bits_per_second` from the JSON output — the **sender-side** measurement.
+1. Starts a one-shot iperf3 UDP **server** on `ce2` via `subprocess.Popen` (not `docker exec -d`) so its JSON stdout is captured by the Python process.
+2. Runs a 5-second iperf3 UDP **client** on `ce1` probing at 3× the target (15 Mbps), so the cap has room to bite.
+3. Reads `end.sum.bits_per_second` from the **server's** JSON — the receiver-side throughput.
 
-The receiver-side iperf3 summary is unreliable in this container environment (SR Linux's virtual network stack sometimes causes UDP receiver timeouts showing 0 bytes). The sender knows exactly how fast it pushed data out through `eth1`, which is directly shaped by `tc` — so sender-side is accurate.
+With CE-side tbf active, the sender's socket is genuinely rate-limited (tc tbf backs up the kernel socket buffer), so sender-side and receiver-side both show ≈ 5 Mbps. Receiver-side is preferred as the ground truth. Sender-side from the client JSON is the fallback if the server output is unavailable.
 
 Pass condition: `4.0 Mbps ≤ measured ≤ 6.0 Mbps` (5.0 ± 20%).
 
@@ -322,7 +324,7 @@ gNMI DELETE /qos/policer-templates/policer-template[name=clab-bw-pe1-e1-2-0]
 docker exec clab-bandwidth-poc-ce1  tc qdisc del dev eth1 root
 ```
 
-After removal, the Linux kernel's default `pfifo_fast` qdisc takes over on `eth1` and throughput returns to the ~12 Mbps container ceiling.
+After removal, the Linux kernel's default `pfifo_fast` qdisc takes over on `eth1` and throughput returns to the link ceiling.
 
 ---
 
@@ -464,7 +466,7 @@ srl-gnmi-bandwidth-poc/
 | Constraint | Detail |
 |---|---|
 | **1000 PPS ceiling** | The free SR Linux container image caps all traffic at 1000 packets/second ≈ 12 Mbps at 1500-byte MTU. Keep test allocations below 10 Mbps or iperf3 will hit the ceiling, not the policer. |
-| **Policer not enforced** | SR Linux QoS policers are ASIC features. The container software datapath accepts the config but does not shape traffic. `tc tbf` on the CE is the actual enforcer. |
+| **Policer not enforced** | SR Linux QoS policers are ASIC features. The container software datapath accepts the config but does not shape traffic. Additionally, SR Linux's AF_PACKET-based forwarding reads packets before kernel tc ingress fires, so PE-side tc is also ineffective. `tc tbf` on the CE container is the actual enforcer. |
 | **gNMI TLS** | SR Linux always requires TLS, even in a container. Use `skip_verify=True` in pygnmi. Using `insecure=True` disables TLS entirely and the connection is rejected. |
 | **Dynamic mgmt IPs** | ContainerLab assigns `172.20.20.x` at deploy time. Never hardcode them. Use `docker inspect` to discover at runtime. |
 | **Boot time** | SR Linux takes 30–60 s after `containerlab deploy` returns before gNMI is responsive. Call `wait_for_gnmi()` before the first allocation. |

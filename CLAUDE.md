@@ -62,7 +62,7 @@ containerlab-pushing/
 | Constraint | Detail |
 |---|---|
 | **Datapath cap** | License-less SR Linux caps at **1000 PPS** (~12 Mbps at 1500-byte MTU). Keep all test allocations below 10 Mbps. |
-| **Policer not enforced** | The `qos policer-templates` config is accepted by the container but **does not shape traffic** in the software datapath. tc enforcement inside the CE container is the actual rate-limiter. |
+| **Policer not enforced** | The `qos policer-templates` config is accepted by the container but **does not shape traffic** in the software datapath. Additionally, SR Linux's data plane reads packets via `AF_PACKET` raw sockets, which fire **before** `tc` ingress qdiscs in the kernel — so PE-side `tc` policing is also bypassed (confirmed: tc shows drops, iperf3 receiver shows 0 loss). `tc tbf` on the **CE container's `eth1` egress** is the actual rate-limiter. |
 | **gNMI TLS** | SR Linux uses TLS with a self-signed cert. Use `skip_verify=True` (not `insecure=True` — that fails). |
 | **gNMI creds** | Port `57400`, user `admin`, password `NokiaSrl1!` |
 | **Dynamic mgmt IPs** | ContainerLab assigns 172.20.20.x at deploy time. Use `docker inspect` to discover — never hardcode. |
